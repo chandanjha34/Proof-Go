@@ -60,10 +60,14 @@ export default function PublicProfilePage() {
     setCollectExplorerUrl("");
 
     let feeTxHash = "";
+    let assistedFeeMode = false;
     try {
       const feeTx = await payCollectionFee(wallets[0]);
       feeTxHash = feeTx.txHash;
-      setFeeExplorerUrl(feeTx.explorerUrl ?? getTxExplorerUrl(feeTx.txHash));
+      assistedFeeMode = feeTx.assistedMode;
+      if (feeTx.txHash) {
+        setFeeExplorerUrl(feeTx.explorerUrl ?? getTxExplorerUrl(feeTx.txHash));
+      }
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -81,7 +85,8 @@ export default function PublicProfilePage() {
         collectorAddress,
         collectorName: collectorName.trim(),
         profileId: tokenId,
-        feeTxHash,
+        feeTxHash: feeTxHash || undefined,
+        assistedFeeMode,
       }),
     });
 
@@ -104,7 +109,7 @@ export default function PublicProfilePage() {
       setCollectExplorerUrl(payload.txExplorerUrl);
     }
 
-    setMessage("⚡ Added to collection on Monad!");
+    setMessage(assistedFeeMode ? "⚡ Added to collection on Monad (assisted fee mode)!" : "⚡ Added to collection on Monad!");
     setShowPrompt(false);
   };
 

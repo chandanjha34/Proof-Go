@@ -383,7 +383,11 @@ export function PokemonMap() {
       try {
         setMessage(`Paying ${COLLECTION_FEE_MON} MON collection fee...`);
         const feeTx = await payCollectionFee(wallet);
-        setFeeExplorerUrl(feeTx.explorerUrl ?? getTxExplorerUrl(feeTx.txHash));
+        if (feeTx.txHash) {
+          setFeeExplorerUrl(feeTx.explorerUrl ?? getTxExplorerUrl(feeTx.txHash));
+        } else {
+          setFeeExplorerUrl("");
+        }
         setCollectExplorerUrl("");
 
         const response = await fetch("/api/collect", {
@@ -393,7 +397,8 @@ export function PokemonMap() {
             collectorAddress: myAddress,
             collectorName: displayName,
             profileId: wave.profile_id,
-            feeTxHash: feeTx.txHash,
+            feeTxHash: feeTx.txHash || undefined,
+            assistedFeeMode: feeTx.assistedMode,
           }),
         });
 
@@ -410,7 +415,11 @@ export function PokemonMap() {
           if (payload.txExplorerUrl) {
             setCollectExplorerUrl(payload.txExplorerUrl);
           }
-          setMessage(`⚡ Encounter confirmed with ${wave.from_name}. Added on Monad!`);
+          setMessage(
+            feeTx.assistedMode
+              ? `⚡ Encounter confirmed with ${wave.from_name}. Added on Monad (assisted fee mode)!`
+              : `⚡ Encounter confirmed with ${wave.from_name}. Added on Monad!`,
+          );
         } else {
           setMessage(payload.error ?? "Encounter confirmed but collect failed. Retry from profile.");
         }

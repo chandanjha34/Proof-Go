@@ -3,7 +3,27 @@
 import { useEffect, useRef } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth";
+import { MONAD_TESTNET } from "@/lib/contracts";
 import { ensureMonadEmbeddedWalletNetwork } from "@/lib/walletFee";
+
+const monadPrivyChain = {
+  id: MONAD_TESTNET.chainId,
+  name: MONAD_TESTNET.name,
+  network: "monad-testnet",
+  nativeCurrency: {
+    decimals: 18,
+    name: "MON",
+    symbol: "MON",
+  },
+  rpcUrls: {
+    default: {
+      http: [MONAD_TESTNET.rpcUrl],
+    },
+    public: {
+      http: [MONAD_TESTNET.rpcUrl],
+    },
+  },
+};
 
 function EnsureMonadTestnetDefault() {
   const { wallets } = useWallets();
@@ -23,6 +43,9 @@ function EnsureMonadTestnetDefault() {
 
     inFlightRef.current = true;
     ensureMonadEmbeddedWalletNetwork(wallet)
+      .catch(() => {
+        // Ignore auto-sync failures; fee flow and wallet panel provide actionable prompts.
+      })
       .finally(() => {
         lastSyncedAddressRef.current = address;
         inFlightRef.current = false;
@@ -43,6 +66,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={appId}
       config={{
+        supportedChains: [monadPrivyChain],
+        defaultChain: monadPrivyChain,
         appearance: {
           theme: "light",
           accentColor: "#00b96b",

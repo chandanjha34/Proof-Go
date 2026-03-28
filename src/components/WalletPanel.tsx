@@ -16,6 +16,7 @@ export function WalletPanel() {
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [loadingFaucet, setLoadingFaucet] = useState(false);
   const [message, setMessage] = useState("");
+  const [faucetExplorerUrl, setFaucetExplorerUrl] = useState("");
 
   const walletAddress = useMemo(() => wallets[0]?.address ?? "", [wallets]);
 
@@ -49,24 +50,52 @@ export function WalletPanel() {
 
     setLoadingFaucet(true);
     setMessage("Sending testnet MON to your wallet...");
+    setFaucetExplorerUrl("");
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+
       const res = await fetch("/api/faucet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ toAddress: walletAddress }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
-      const payload = (await res.json()) as { ok?: boolean; txHash?: string; error?: string };
+      const payload = (await res.json()) as {
+        ok?: boolean;
+        txHash?: string;
+        txExplorerUrl?: string;
+        status?: "confirmed" | "pending" | "failed";
+        error?: string;
+        details?: string;
+      };
       if (!res.ok || !payload.ok) {
-        setMessage(payload.error ?? "Faucet request failed. Use public faucet link.");
+        setMessage(payload.error ?? payload.details ?? "Faucet request failed. Use public faucet link.");
+        if (payload.txExplorerUrl) {
+          setFaucetExplorerUrl(payload.txExplorerUrl);
+        }
         return;
       }
 
-      setMessage(`Faucet sent. Tx: ${payload.txHash?.slice(0, 12)}...`);
+      if (payload.txExplorerUrl) {
+        setFaucetExplorerUrl(payload.txExplorerUrl);
+      }
+
+      if (payload.status === "pending") {
+        setMessage(`Faucet broadcasted. Confirmation pending. Tx: ${payload.txHash?.slice(0, 12)}...`);
+      } else {
+        setMessage(`Faucet sent. Tx: ${payload.txHash?.slice(0, 12)}...`);
+      }
       await refreshBalance();
-    } catch {
-      setMessage("Faucet request failed. Use public faucet link.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setMessage("Faucet request timed out. Please retry in a few seconds.");
+      } else {
+        setMessage("Faucet request failed. Use public faucet link.");
+      }
     } finally {
       setLoadingFaucet(false);
     }
@@ -113,9 +142,19 @@ export function WalletPanel() {
       </div>
 
       {message ? (
-        <p className="mt-3 rounded-xl border-2 border-black bg-[#e0f2fe] p-2 text-sm font-black text-black">
-          {message}
-        </p>
+        <div className="mt-3 rounded-xl border-2 border-black bg-[#e0f2fe] p-2 text-sm font-black text-black">
+          <p>{message}</p>
+          {faucetExplorerUrl ? (
+            <a
+              href={faucetExplorerUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-block rounded-full border-2 border-black bg-white px-3 py-1 text-xs font-black"
+            >
+              View Faucet Tx
+            </a>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

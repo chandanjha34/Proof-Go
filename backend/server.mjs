@@ -36,6 +36,12 @@ const collectionAbi = [
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "3mb" }));
+app.use((req, _res, next) => {
+  if (req.path !== "/health") {
+    console.log(`[indexer] ${req.method} ${req.path}`);
+  }
+  next();
+});
 
 const supabaseKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_PUBLISHABLE_KEY;
 const supabaseEnabled = Boolean(SUPABASE_URL && supabaseKey);
@@ -306,6 +312,7 @@ async function startChainSync() {
   const provider = new JsonRpcProvider(RPC_URL);
   const identity = new Contract(IDENTITY_NFT_ADDRESS, identityAbi, provider);
   const collection = new Contract(COLLECTION_REGISTRY_ADDRESS, collectionAbi, provider);
+  let lastTimeoutLogAt = 0;
 
   setInterval(async () => {
     try {
@@ -346,6 +353,19 @@ async function startChainSync() {
         lastCollectionBlock: colTo + 1,
       });
     } catch (error) {
+      const isTimeout =
+        (error?.code ?? "") === "TIMEOUT"
+        || String(error?.shortMessage ?? "").toLowerCase().includes("timeout");
+
+      if (isTimeout) {
+        const now = Date.now();
+        if (now - lastTimeoutLogAt > 30_000) {
+          console.warn("Indexer poll timeout from RPC, continuing retries...");
+          lastTimeoutLogAt = now;
+        }
+        return;
+      }
+
       console.error("Indexer poll error", error);
     }
   }, 2500);

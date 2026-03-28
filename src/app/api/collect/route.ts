@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { JsonRpcProvider, parseEther } from "ethers";
-import { collectOnMonad } from "@/lib/chain";
+import { chargeCollectionFeeAssistedOnMonad, collectOnMonad } from "@/lib/chain";
 import {
   COLLECTION_FEE_MON,
   COLLECTION_FEE_RECIPIENT,
@@ -18,57 +18,69 @@ export async function POST(request: Request) {
     collectorName: string;
     profileId: string;
     feeTxHash?: string;
+    assistedFeeMode?: boolean;
   };
 
   if (!collectorAddress || !collectorName || !profileId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  if (!feeTxHash) {
-    return NextResponse.json(
-      { error: "Collection fee transaction is required" },
-      { status: 402 },
-    );
-  }
+  let resolvedFeeTxHash = feeTxHash ?? "";
+  let assistedFeeMode = false;
 
-  const feeTx = await provider.getTransaction(feeTxHash);
-  const feeReceipt = await provider.getTransactionReceipt(feeTxHash);
-  if (!feeTx || !feeReceipt || feeReceipt.status !== 1) {
-    return NextResponse.json({ error: "Fee payment not confirmed" }, { status: 402 });
-  }
+  if (!resolvedFeeTxHash) {
+    const assisted = await chargeCollectionFeeAssistedOnMonad();
+    resolvedFeeTxHash = assisted.txHash;
+    assistedFeeMode = true;
+  } else {
+    const feeTx = await provider.getTransaction(resolvedFeeTxHash);
+    const feeReceipt = await provider.getTransactionReceipt(resolvedFeeTxHash);
+    if (!feeTx || !feeReceipt || feeReceipt.status !== 1) {
+      return NextResponse.json({ error: "Fee payment not confirmed" }, { status: 402 });
+    }
 
-  const expectedFrom = collectorAddress.toLowerCase();
-  const expectedTo = COLLECTION_FEE_RECIPIENT.toLowerCase();
-  const minFee = parseEther(COLLECTION_FEE_MON.toFixed(6));
+    const expectedFrom = collectorAddress.toLowerCase();
+    const expectedTo = COLLECTION_FEE_RECIPIENT.toLowerCase();
+    const minFee = parseEther(COLLECTION_FEE_MON.toFixed(6));
 
-  if ((feeTx.from ?? "").toLowerCase() !== expectedFrom) {
-    return NextResponse.json({ error: "Fee tx sender mismatch" }, { status: 403 });
-  }
+    if ((feeTx.from ?? "").toLowerCase() !== expectedFrom) {
+      return NextResponse.json({ error: "Fee tx sender mismatch" }, { status: 403 });
+    }
 
-  if ((feeTx.to ?? "").toLowerCase() !== expectedTo) {
-    return NextResponse.json({ error: "Fee tx recipient mismatch" }, { status: 403 });
-  }
+    if ((feeTx.to ?? "").toLowerCase() !== expectedTo) {
+      return NextResponse.json({ error: "Fee tx recipient mismatch" }, { status: 403 });
+    }
 
-  if (feeTx.value < minFee) {
-    return NextResponse.json({ error: "Insufficient collection fee" }, { status: 402 });
+    if (feeTx.value < minFee) {
+      return NextResponse.json({ error: "Insufficient collection fee" }, { status: 402 });
+    }
   }
 
   const result = await collectOnMonad(collectorAddress, profileId);
 
-  await saveCollection({
+  const indexed = await saveCollection({
     collectorAddress: collectorAddress.toLowerCase(),
     collectorName,
     profileId,
     txHash: result.txHash,
-    feeTxHash,
+    feeTxHash: resolvedFeeTxHash,
   });
+
+  if (!indexed) {
+    console.warn("[collect] indexer write failed or timed out", {
+      collectorAddress,
+      profileId,
+      txHash: result.txHash,
+    });
+  }
 
   return NextResponse.json({
     ok: true,
     txHash: result.txHash,
     txExplorerUrl: getTxExplorerUrl(result.txHash),
-    feeTxHash,
-    feeTxExplorerUrl: getTxExplorerUrl(feeTxHash),
+    feeTxHash: resolvedFeeTxHash,
+    feeTxExplorerUrl: getTxExplorerUrl(resolvedFeeTxHash),
+    assistedFeeMode,
     simulated: result.simulated,
   });
 }

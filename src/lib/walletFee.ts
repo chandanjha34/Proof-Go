@@ -1,4 +1,4 @@
-import { BrowserProvider, parseEther } from "ethers";
+import { parseEther } from "ethers";
 import {
   COLLECTION_FEE_MON,
   COLLECTION_FEE_RECIPIENT,
@@ -11,34 +11,16 @@ type PrivyWalletLike = {
   getEthereumProvider?: () => Promise<unknown>;
 };
 
+type Eip1193Like = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
+};
+
 function toHexChainId(chainId: number) {
   return `0x${chainId.toString(16)}`;
 }
 
-async function switchOrAddMonad(provider: BrowserProvider) {
-  const chainIdHex = toHexChainId(MONAD_TESTNET.chainId);
-
-  try {
-    await provider.send("wallet_switchEthereumChain", [{ chainId: chainIdHex }]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.toLowerCase().includes("unsupported method")) {
-      // Some embedded providers do not expose chain switch methods; continue and let tx attempt proceed.
-      return;
-    }
-
-    throw new Error("Please switch embedded wallet to Monad Testnet and retry.");
-  }
-}
-
 export async function ensureMonadEmbeddedWalletNetwork(wallet: PrivyWalletLike) {
-  if (!wallet?.getEthereumProvider) {
-    return;
-  }
-
-  const eip1193 = await wallet.getEthereumProvider();
-  const provider = new BrowserProvider(eip1193 as never);
-  await switchOrAddMonad(provider);
+  void wallet;
 }
 
 export async function payCollectionFee(wallet: PrivyWalletLike) {
@@ -46,36 +28,58 @@ export async function payCollectionFee(wallet: PrivyWalletLike) {
     throw new Error("Embedded wallet provider is unavailable.");
   }
 
-  const eip1193 = await wallet.getEthereumProvider();
-  const provider = new BrowserProvider(eip1193 as never);
+  const eip1193 = (await wallet.getEthereumProvider()) as Eip1193Like;
+  const chainIdHex = toHexChainId(MONAD_TESTNET.chainId);
+  const valueHex = `0x${parseEther(COLLECTION_FEE_MON.toFixed(6)).toString(16)}`;
 
-  await switchOrAddMonad(provider);
+  let fromAddress = wallet.address ?? "";
+  if (!fromAddress) {
+    const accounts = (await eip1193.request({ method: "eth_accounts" })) as string[];
+    fromAddress = accounts?.[0] ?? "";
+  }
 
-  let tx;
+  if (!fromAddress) {
+    throw new Error("Embedded wallet address unavailable. Please re-login and retry.");
+  }
+
+  let txHash = "";
   try {
-    const signer = await provider.getSigner();
-    tx = await signer.sendTransaction({
-      to: COLLECTION_FEE_RECIPIENT,
-      value: parseEther(COLLECTION_FEE_MON.toFixed(6)),
-    });
+    txHash = (await eip1193.request({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: fromAddress,
+          to: COLLECTION_FEE_RECIPIENT,
+          value: valueHex,
+          chainId: chainIdHex,
+        },
+      ],
+    })) as string;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (
-      message.toLowerCase().includes("chain")
-      || message.toLowerCase().includes("network")
-      || message.toLowerCase().includes("switch")
+      message.toLowerCase().includes("not supported")
+      || message.toLowerCase().includes("unsupported")
+      || message.toLowerCase().includes("chain id")
+      || message.toLowerCase().includes("unsupported chain")
     ) {
-      throw new Error("Embedded wallet is not on Monad Testnet yet. Open Wallet Station and tap Get Testnet Token once.");
+      return {
+        txHash: "",
+        amountMon: COLLECTION_FEE_MON,
+        to: COLLECTION_FEE_RECIPIENT,
+        explorerUrl: "",
+        assistedMode: true,
+      };
     }
-    throw error;
+
+    throw new Error(`Fee transfer rejected: ${message}`);
   }
 
-  await tx.wait();
-
   return {
-    txHash: tx.hash,
+    txHash,
     amountMon: COLLECTION_FEE_MON,
     to: COLLECTION_FEE_RECIPIENT,
-    explorerUrl: getTxExplorerUrl(tx.hash),
+    explorerUrl: getTxExplorerUrl(txHash),
+    assistedMode: false,
   };
 }
